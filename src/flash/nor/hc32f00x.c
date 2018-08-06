@@ -7,6 +7,8 @@
 #include <target/algorithm.h>
 #include <target/armv7m.h>
 
+#define FLASH_ERASE_TIMEOUT 100
+
 #define FLASH_BASE 0x00000000
 #define FLASH_NUM_SECTORS 64
 #define FLASH_SECTOR_SIZE 512
@@ -57,14 +59,13 @@
 // 16bits each references 4 sectors, 0:write protect 1:write allowed
 
 static int hc32_mass_erase(struct flash_bank *bank);
-static int hc32_get_device_id(struct flash_bank *bank, uint32_t *device_id);
-static int hc32_write_block(struct flash_bank *bank, const uint8_t *buffer,
-                            uint32_t offset, uint32_t count);
 
 static uint32_t hc32_get_flash_reg(struct flash_bank *bank, uint32_t reg)
 {
+    uint32_t value;
     struct target *target = bank->target;
-    return target_read_u32(FLASH_REG_BASE_B0 + reg);
+    target_read_u32(target, FLASH_REG_BASE_B0 + reg, &value);
+    return value;
 }
 
 static void hc32_set_flash_reg(struct flash_bank *bank, uint32_t reg, uint32_t dat)
@@ -122,6 +123,10 @@ static int hc32_erase(struct flash_bank *bank, int first, int last)
         LOG_ERROR("Target not halted");
         return ERROR_TARGET_NOT_HALTED;
     }
+    const struct armv7m_common *cm = target_to_armv7m(target);
+    uint32_t R_PC;
+    cm->load_core_reg_u32(target, ARMV7M_PC, &R_PC);
+    cm->store_core_reg_u32(target, ARMV7M_PC, 0x20000000);
 
     if ((first == 0) && (last == (bank->num_sectors - 1)))
         return hc32_mass_erase(bank);
@@ -130,9 +135,9 @@ static int hc32_erase(struct flash_bank *bank, int first, int last)
     hc32_set_flash_reg(bank, HC32_FLASH_SLOCK, 0xffff);
     uint32_t cr = hc32_get_flash_reg(bank, HC32_FLASH_CR);
     int retval = ERROR_OK;
+    hc32_set_flash_reg(bank, HC32_FLASH_CR, (cr & 0xfffffffc) | 0x2);
     for (i = first; i <= last; i++)
     {
-        hc32_set_flash_reg(bank, HC32_FLASH_CR, (cr & 0xfffffffc) | 0x2);
         target_write_u32(target, FLASH_BASE + i * FLASH_SECTOR_SIZE, 0x00000000);
         retval = hc32_wait_status_busy(bank, FLASH_ERASE_TIMEOUT);
         if (retval != ERROR_OK)
@@ -148,7 +153,6 @@ static int hc32_erase(struct flash_bank *bank, int first, int last)
 
 static int hc32_protect(struct flash_bank *bank, int set, int first, int last)
 {
-    struct target *target = bank->target;
     int i;
 
     uint32_t slock = hc32_get_flash_reg(bank, HC32_FLASH_SLOCK);
@@ -156,7 +160,7 @@ static int hc32_protect(struct flash_bank *bank, int set, int first, int last)
     {
         if (set)
         {
-            slock &= (~(1 << (i / 4));
+            slock &= (~(1 << (i / 4)));
         }
         else
         {
@@ -171,22 +175,26 @@ static int hc32_write(struct flash_bank *bank, const uint8_t *buffer,
                       uint32_t offset, uint32_t count)
 {
     struct target *target = bank->target;
-    int i;
+    uint32_t i;
 
     if (bank->target->state != TARGET_HALTED)
     {
         LOG_ERROR("Target not halted");
         return ERROR_TARGET_NOT_HALTED;
     }
+    const struct armv7m_common *cm = target_to_armv7m(target);
+    uint32_t R_PC;
+    cm->load_core_reg_u32(target, ARMV7M_PC, &R_PC);
+    cm->store_core_reg_u32(target, ARMV7M_PC, 0x20000000);
 
     uint32_t slock = hc32_get_flash_reg(bank, HC32_FLASH_SLOCK);
     hc32_set_flash_reg(bank, HC32_FLASH_SLOCK, 0xffff);
     uint32_t cr = hc32_get_flash_reg(bank, HC32_FLASH_CR);
     int retval = ERROR_OK;
-    for (i = 0; i < count; i++)
+    hc32_set_flash_reg(bank, HC32_FLASH_CR, (cr & 0xfffffffc) | 0x1);
+    for (i = 0; i < count; i += 4)
     {
-        hc32_set_flash_reg(bank, HC32_FLASH_CR, (cr & 0xfffffffc) | 0x1);
-        target_write_u32(target, FLASH_BASE + offset + i, buffer[i]);
+        target_write_u32(target, FLASH_BASE + offset + i, *(uint32_t *)(buffer + i));
         retval = hc32_wait_status_busy(bank, FLASH_ERASE_TIMEOUT);
         if (retval != ERROR_OK)
         {
@@ -197,11 +205,11 @@ static int hc32_write(struct flash_bank *bank, const uint8_t *buffer,
     hc32_set_flash_reg(bank, HC32_FLASH_CR, cr);
     hc32_set_flash_reg(bank, HC32_FLASH_SLOCK, slock);
     return retval;
-    return ERROR_OK;
 }
 
 static int hc32_probe(struct flash_bank *bank)
 {
+    int i;
     bank->base = FLASH_BASE;
     bank->size = FLASH_NUM_SECTORS * FLASH_SECTOR_SIZE;
     bank->num_sectors = FLASH_NUM_SECTORS;
@@ -231,7 +239,6 @@ COMMAND_HANDLER(hc32_handle_part_id_command)
 
 static int hc32_protect_check(struct flash_bank *bank)
 {
-    struct target *target = bank->target;
     int i;
 
     uint32_t slock = hc32_get_flash_reg(bank, HC32_FLASH_SLOCK);
@@ -261,8 +268,16 @@ static int get_hc32_info(struct flash_bank *bank, char *buf, int buf_size)
     return ERROR_OK;
 }
 
+FLASH_BANK_COMMAND_HANDLER(hc32_flash_bank_command)
+{
+    if (CMD_ARGC < 6)
+        return ERROR_COMMAND_SYNTAX_ERROR;
+    bank->driver_priv = NULL;
+    return ERROR_OK;
+}
+
 struct flash_driver hc32_flash = {
-    .name = "hc32",
+    .name = "hc32f00x",
     .commands = NULL,
     .flash_bank_command = hc32_flash_bank_command,
     .erase = hc32_erase,

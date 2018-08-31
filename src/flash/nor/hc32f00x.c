@@ -274,9 +274,12 @@ static int hc32_write(struct flash_bank *bank, const uint8_t *buffer,
     uint32_t cr = hc32_get_flash_reg(bank, HC32_FLASH_CR);
     int retval = ERROR_OK;
     hc32_set_flash_reg(bank, HC32_FLASH_CR, (cr & 0xfffffffc) | 0x1);
-    uint32_t block_size = 64;
-    for (i=0; i < count; i += 16) {
-        retval = hc32_write_block(bank, buffer + i, offset + i, 64);
+    uint32_t block_size = 1024;
+    for (i=0; i < count; i += block_size) {
+        if (i > count - block_size) {
+            block_size = count - i;
+        }
+        retval = hc32_write_block(bank, buffer + i, offset + i, block_size);
         if (retval != ERROR_OK) {
             break;
         }

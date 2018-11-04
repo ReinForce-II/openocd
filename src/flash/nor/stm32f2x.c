@@ -985,9 +985,15 @@ static int stm32x_probe(struct flash_bank *bank)
 		}
 	}
 
-	/* calculate numbers of pages */
+	/* F730 devices have same device id as F72x devices, but max sector size is different */
+	if (device_id == 0x452 && flash_size_in_kb == 64) {
+		max_sector_size_in_kb = 16;
+		max_flash_size_in_kb = 64;
+	}
+
+	/* calculate numbers of pages, F730 devices have different flash bank arrangement */
 	int num_pages = flash_size_in_kb / max_sector_size_in_kb
-		+ (stm32x_info->has_large_mem ? 8 : 4);
+		+ ((device_id == 0x452 && flash_size_in_kb == 64) ? (0) : (stm32x_info->has_large_mem ? 8 : 4));
 
 	bank->base = base_address;
 	bank->num_sectors = num_pages;
@@ -1026,15 +1032,20 @@ static int stm32x_probe(struct flash_bank *bank)
 		}
 	} else {
 		/* single-bank */
-		setup_bank(bank, 0, flash_size_in_kb, max_sector_size_in_kb);
-
-		/* F413/F423, sectors 14 and 15 share one common protection bit */
-		if (device_id == 0x463) {
-			for (i = 0; i < num_prot_blocks; i++) {
-				bank->prot_blocks[i].offset = bank->sectors[i].offset;
-				bank->prot_blocks[i].size = bank->sectors[i].size;
+		if (device_id == 0x452 && flash_size_in_kb == 64) {
+			/* F730 devices have only 4 16KB sectors */
+			setup_sector(bank, 0, num_pages, max_sector_size_in_kb * 1024);
+		} else {
+			setup_bank(bank, 0, flash_size_in_kb, max_sector_size_in_kb);
+		
+			/* F413/F423, sectors 14 and 15 share one common protection bit */
+			if (device_id == 0x463) {
+				for (i = 0; i < num_prot_blocks; i++) {
+					bank->prot_blocks[i].offset = bank->sectors[i].offset;
+					bank->prot_blocks[i].size = bank->sectors[i].size;
+				}
+				bank->prot_blocks[num_prot_blocks - 1].size <<= 1;
 			}
-			bank->prot_blocks[num_prot_blocks - 1].size <<= 1;
 		}
 	}
 	bank->num_prot_blocks = num_prot_blocks;

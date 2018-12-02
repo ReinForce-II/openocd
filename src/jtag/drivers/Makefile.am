@@ -20,6 +20,9 @@ DRIVERFILES =
 # Standard Driver: common files
 DRIVERFILES += %D%/driver.c
 
+# CMSIS DAP over Ethernet
+DRIVERFILES += %D%/cmsis_dap_eth.c
+
 if USE_LIBUSB1
 DRIVERFILES += %D%/libusb1_common.c
 %C%_libocdjtagdrivers_la_CPPFLAGS += $(LIBUSB1_CFLAGS)

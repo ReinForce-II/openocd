@@ -40,6 +40,7 @@
  * that contain a jtag_interface structure that can added to this list.
  */
 
+extern struct jtag_interface cmsis_dap_eth_interface;
 #if BUILD_ZY1000 == 1
 extern struct jtag_interface zy1000_interface;
 #elif defined(BUILD_MINIDRIVER_DUMMY)
@@ -145,6 +146,7 @@ extern struct jtag_interface xds110_interface;
  * or some number of standard driver interfaces, never both.
  */
 struct jtag_interface *jtag_interfaces[] = {
+		&cmsis_dap_eth_interface,
 #if BUILD_ZY1000 == 1
 		&zy1000_interface,
 #elif defined(BUILD_MINIDRIVER_DUMMY)
